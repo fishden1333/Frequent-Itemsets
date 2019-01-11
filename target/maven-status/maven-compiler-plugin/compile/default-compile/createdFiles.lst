@@ -1,0 +1,3 @@
+org/apache/hadoop/examples/FrequentItemsets$PCYPass1Reducer.class
+org/apache/hadoop/examples/FrequentItemsets.class
+org/apache/hadoop/examples/FrequentItemsets$PCYPass1Mapper.class
