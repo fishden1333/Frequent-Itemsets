@@ -17,6 +17,7 @@ public class FrequentItemsets {
 
   public static int BASKET_COUNT = 9835;  // The total number of baskets
   public static int SUPPORT = 150;  // The support for frequent itemsets
+  public static double CONFIDENCE = 0.2;  // The confidence for association rules
   public static int HASH_LEN = 100000;  // The length of the hash table
   public static int MAX_RULE_COUNT = 10000;  // The maximum number of rules
 
@@ -725,6 +726,146 @@ public class FrequentItemsets {
     }
   }
 
+  /* Mapper for computing the confidence and interrestingness of each rule */
+  /* Input: <rule> <list of (freq item:count)>|<list of (freq pair:count)>|<list of (freq triple:count)> */
+  /* Output: <confidence> <rule>|<interestingness> */
+  public static class FindConfidenceMapper extends Mapper<Object, Text, Text, Text>{
+    private Text keyText = new Text();
+    private Text valueText = new Text();
+
+    public void map(Object key, Text value, Context context) throws IOException, InterruptedException {
+      StringTokenizer itr = new StringTokenizer(value.toString(), "\n\t");
+
+      // Read each line
+      while (itr.hasMoreTokens()) {
+        String ruleStr = itr.nextToken();
+        String valueStr = new String("");
+        if (itr.hasMoreTokens()) {
+          valueStr = itr.nextToken();
+        }
+        int separateIdx1 = valueStr.indexOf('|');
+        int separateIdx2 = valueStr.indexOf('|', separateIdx1 + 1);
+        String freqItemStr = valueStr.substring(0, separateIdx1);
+        String freqPairStr = valueStr.substring(separateIdx1 + 1, separateIdx2);
+        String freqTripleStr = valueStr.substring(separateIdx2 + 1);
+        String[] freqItemList = freqItemStr.split(",");
+        String[] freqPairList = freqPairStr.split(",");
+        String[] freqTripleList = freqTripleStr.split(",");
+
+        // Find the support for both side of the itemset of each rule
+        String[] itemsetBoth = ruleStr.split(">");
+        int[] supportBoth = new int[2];
+        for (int b = 0; b < 2; b++) {
+
+          // The itemset is a pair
+          if (itemsetBoth[b].indexOf('+') != -1) {
+            String item1 = itemsetBoth[b].substring(0, itemsetBoth[b].indexOf('+'));
+            String item2 = itemsetBoth[b].substring(itemsetBoth[b].indexOf('+') + 1);
+            for (int i = 0; i < freqPairList.length; i++) {
+              String pairItem1 = freqPairList[i].substring(1, freqPairList[i].indexOf('+'));
+              String pairItem2 = freqPairList[i].substring(freqPairList[i].indexOf('+') + 1, freqPairList[i].indexOf(':'));
+              if ((pairItem1.equals(item1) && pairItem2.equals(item2)) || (pairItem1.equals(item2) && pairItem2.equals(item1))) {
+                String supportStr = freqPairList[i].substring(freqPairList[i].indexOf(':') + 1, freqPairList[i].indexOf(')'));
+                supportBoth[b] = Integer.parseInt(supportStr);
+                break;
+              }
+            }
+            itemsetBoth[b] = item1 + ", " + item2;
+          }
+
+          // The itemset is not a pair
+          else {
+            for (int i = 0; i < freqItemList.length; i++) {
+              String freqItem = freqItemList[i].substring(1, freqItemList[i].indexOf(':'));
+              if (freqItem.equals(itemsetBoth[b])) {
+                String supportStr = freqItemList[i].substring(freqItemList[i].indexOf(':') + 1, freqItemList[i].indexOf(')'));
+                supportBoth[b] = Integer.parseInt(supportStr);
+                break;
+              }
+            }
+          }
+        }
+
+        // Find the support for the union of both itemsets of each rule
+        String[] itemsetUnion = ruleStr.split(">|\\+");
+        int supportUnion = 0;
+
+        // The union is a triple
+        if (itemsetUnion.length == 3) {
+          String item1 = itemsetUnion[0];
+          String item2 = itemsetUnion[1];
+          String item3 = itemsetUnion[2];
+          for (int i = 0; i < freqTripleList.length; i++) {
+            int sepIdx1 = freqTripleList[i].indexOf('+');
+            int sepIdx2 = freqTripleList[i].indexOf('+', sepIdx1 + 1);
+            String tripleItem1 = freqTripleList[i].substring(1, sepIdx1);
+            String tripleItem2 = freqTripleList[i].substring(sepIdx1 + 1, sepIdx2);
+            String tripleItem3 = freqTripleList[i].substring(sepIdx2 + 1, freqTripleList[i].indexOf(':'));
+            if (tripleItem1.equals(item1) || tripleItem1.equals(item2) || tripleItem1.equals(item3)) {
+              if (tripleItem2.equals(item1) || tripleItem2.equals(item2) || tripleItem2.equals(item3)) {
+                if (tripleItem3.equals(item1) || tripleItem3.equals(item2) || tripleItem3.equals(item3)) {
+                  String supportStr = freqTripleList[i].substring(freqTripleList[i].indexOf(':') + 1, freqTripleList[i].indexOf(')'));
+                  supportUnion = Integer.parseInt(supportStr);
+                  break;
+                }
+              }
+            }
+          }
+        }
+
+        // The union is a pair
+        else {
+          String item1 = itemsetUnion[0];
+          String item2 = itemsetUnion[1];
+          for (int i = 0; i < freqPairList.length; i++) {
+            String pairItem1 = freqPairList[i].substring(1, freqPairList[i].indexOf('+'));
+            String pairItem2 = freqPairList[i].substring(freqPairList[i].indexOf('+') + 1, freqPairList[i].indexOf(':'));
+            if ((pairItem1.equals(item1) && pairItem2.equals(item2)) || (pairItem1.equals(item2) && pairItem2.equals(item1))) {
+              String supportStr = freqPairList[i].substring(freqPairList[i].indexOf(':') + 1, freqPairList[i].indexOf(')'));
+              supportUnion = Integer.parseInt(supportStr);
+              break;
+            }
+          }
+        }
+
+        // Calculate the confidence and interestingness of the rule
+        double confidence = (double)(supportUnion) / (double)(supportBoth[0]);
+        double interestingness = confidence - (double)(supportBoth[1]) / BASKET_COUNT;
+
+        // Output the key-value pair if the confidence is above threshold
+        if (confidence >= CONFIDENCE) {
+          String ruleFormatted = "(" + itemsetBoth[0] + ") -> (" + itemsetBoth[1] + ")";
+          keyText.set(String.valueOf(1.0 / confidence));
+          valueText.set(ruleFormatted + "|" + String.format("%.3f", interestingness));
+          context.write(keyText, valueText);
+        }
+      }
+    }
+  }
+
+  /* Reducer for computing the confidence and interrestingness of each rule */
+  /* Input: <confidence> <rule>|<interestingness> */
+  /* Output: <rule> C: <confidence>, I:<interestingness> */
+  public static class FindConfidenceReducer extends Reducer<Text, Text, Text, Text> {
+    private Text keyText = new Text();
+    private Text valueText = new Text();
+
+    public void reduce(Text key, Iterable<Text> values, Context context) throws IOException, InterruptedException {
+      String invConfidence = key.toString();
+      double confidence = 1.0 / Double.parseDouble(invConfidence);
+
+      for (Text val : values) {
+        String ruleStr = val.toString().substring(0, val.toString().indexOf('|'));
+        String interestingness = val.toString().substring(val.toString().indexOf('|') + 1);
+
+        // Output the key-valur pair based on the order of the confidence
+        keyText.set(ruleStr);
+        valueText.set("C: " + String.format("%.3f", confidence) + ", I: " + interestingness);
+        context.write(keyText, valueText);
+      }
+    }
+  }
+
   public static void main(String[] args) throws Exception {
     Configuration conf = new Configuration();
     String[] otherArgs = new GenericOptionsParser(conf, args).getRemainingArgs();
@@ -734,7 +875,6 @@ public class FrequentItemsets {
     }
 
     // PCY algorithm pass 1: Count the items, and hash each pair
-    /*
     Job job1 = new Job(conf, "PCY pass 1");
     job1.setJarByClass(FrequentItemsets.class);
     job1.setMapperClass(PCYPass1Mapper.class);
@@ -744,10 +884,8 @@ public class FrequentItemsets {
     FileInputFormat.addInputPath(job1, new Path(otherArgs[0]));
     FileOutputFormat.setOutputPath(job1, new Path(otherArgs[1] + "_1"));
     job1.waitForCompletion(true);
-    */
 
     // Prepare for PCY algorithm pass 2
-    /*
     Job job2 = new Job(conf, "Prepare pass 2");
     job2.setJarByClass(FrequentItemsets.class);
     job2.setMapperClass(PreparePass2Mapper.class);
@@ -757,10 +895,8 @@ public class FrequentItemsets {
     FileInputFormat.addInputPath(job2, new Path(otherArgs[1] + "_1"));
     FileOutputFormat.setOutputPath(job2, new Path(otherArgs[1] + "_2"));
     job2.waitForCompletion(true);
-    */
 
     // PCY algorithm pass 2: Count the pairs that hash to frequent buckets
-    /*
     Job job3 = new Job(conf, "PCY pass 2");
     job3.setJarByClass(FrequentItemsets.class);
     job3.setMapperClass(PCYPass2Mapper.class);
@@ -770,10 +906,8 @@ public class FrequentItemsets {
     FileInputFormat.addInputPath(job3, new Path(otherArgs[1] + "_2"));
     FileOutputFormat.setOutputPath(job3, new Path(otherArgs[1] + "_3"));
     job3.waitForCompletion(true);
-    */
 
     // Prepare for PCY algorithm pass 3
-    /*
     Job job4 = new Job(conf, "Prepare pass 3");
     job4.setJarByClass(FrequentItemsets.class);
     job4.setMapperClass(PreparePass3Mapper.class);
@@ -783,10 +917,8 @@ public class FrequentItemsets {
     FileInputFormat.addInputPath(job4, new Path(otherArgs[1] + "_3"));
     FileOutputFormat.setOutputPath(job4, new Path(otherArgs[1] + "_4"));
     job4.waitForCompletion(true);
-    */
 
     // PCY algorithm pass 3: Count the triples that hash to frequent buckets
-    /*
     Job job5 = new Job(conf, "PCY pass 3");
     job5.setJarByClass(FrequentItemsets.class);
     job5.setMapperClass(PCYPass3Mapper.class);
@@ -794,20 +926,29 @@ public class FrequentItemsets {
     job5.setOutputKeyClass(Text.class);
     job5.setOutputValueClass(Text.class);
     FileInputFormat.addInputPath(job5, new Path(otherArgs[1] + "_4"));
-    FileOutputFormat.setOutputPath(job5, new Path(otherArgs[1] + "_5"));
+    FileOutputFormat.setOutputPath(job5, new Path(otherArgs[1] + "_freq"));
     job5.waitForCompletion(true);
-    */
 
     // Generate association rules based on the frequent itemsets
     Job job6 = new Job(conf, "Generate rule");
     job6.setJarByClass(FrequentItemsets.class);
     job6.setMapperClass(GenerateRuleMapper.class);
-    //job6.setNumReduceTasks(0);
     job6.setReducerClass(GenerateRuleReducer.class);
     job6.setOutputKeyClass(Text.class);
     job6.setOutputValueClass(Text.class);
-    FileInputFormat.addInputPath(job6, new Path(otherArgs[1] + "_5"));
+    FileInputFormat.addInputPath(job6, new Path(otherArgs[1] + "_freq"));
     FileOutputFormat.setOutputPath(job6, new Path(otherArgs[1] + "_6"));
     job6.waitForCompletion(true);
+
+    // Calculate the confidence and the interestingness of each rule
+    Job job7 = new Job(conf, "Confidence and interestingness");
+    job7.setJarByClass(FrequentItemsets.class);
+    job7.setMapperClass(FindConfidenceMapper.class);
+    job7.setReducerClass(FindConfidenceReducer.class);
+    job7.setOutputKeyClass(Text.class);
+    job7.setOutputValueClass(Text.class);
+    FileInputFormat.addInputPath(job7, new Path(otherArgs[1] + "_6"));
+    FileOutputFormat.setOutputPath(job7, new Path(otherArgs[1] + "_rule"));
+    job7.waitForCompletion(true);
   }
 }

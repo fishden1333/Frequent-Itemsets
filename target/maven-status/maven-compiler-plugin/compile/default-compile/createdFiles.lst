@@ -1,4 +1,5 @@
 org/apache/hadoop/examples/FrequentItemsets$PCYPass2Mapper.class
+org/apache/hadoop/examples/FrequentItemsets$FindConfidenceMapper.class
 org/apache/hadoop/examples/FrequentItemsets$GenerateRuleReducer.class
 org/apache/hadoop/examples/FrequentItemsets.class
 org/apache/hadoop/examples/FrequentItemsets$PreparePass2Mapper.class
@@ -8,6 +9,7 @@ org/apache/hadoop/examples/FrequentItemsets$GenerateRuleMapper.class
 org/apache/hadoop/examples/FrequentItemsets$PCYPass3Mapper.class
 org/apache/hadoop/examples/FrequentItemsets$PreparePass2Reducer.class
 org/apache/hadoop/examples/FrequentItemsets$PCYPass1Reducer.class
+org/apache/hadoop/examples/FrequentItemsets$FindConfidenceReducer.class
 org/apache/hadoop/examples/FrequentItemsets$PCYPass2Reducer.class
 org/apache/hadoop/examples/FrequentItemsets$PCYPass1Mapper.class
 org/apache/hadoop/examples/FrequentItemsets$PreparePass3Reducer.class
