@@ -18,6 +18,7 @@ public class FrequentItemsets {
   public static int BASKET_COUNT = 9835;  // The total number of baskets
   public static int SUPPORT = 150;  // The support for frequent itemsets
   public static int HASH_LEN = 100000;  // The length of the hash table
+  public static int MAX_RULE_COUNT = 10000;  // The maximum number of rules
 
   /* Mapper for the pass 1 of PCY algorithm, to find the frequent pairs */
   /* Input: <basket items> */
@@ -568,7 +569,7 @@ public class FrequentItemsets {
           break;
         }
       }
-      
+
       else {
 
         // Count each triple
@@ -587,6 +588,143 @@ public class FrequentItemsets {
     }
   }
 
+  /* Mapper for association rule generation */
+  /* Input: "Freq item" <(freq item:count)> */
+  /*        "Freq pair" <(freq pair:count)> */
+  /*        "Freq triple" <(freq triple:count)> */
+  /* Output: "key" R|<rule> */
+  /*         "key" F|<(freq item:count)> */
+  /*         "key" P|<(freq pair:count)> */
+  /*         "key" T|<(freq triple:count)> */
+  public static class GenerateRuleMapper extends Mapper<Object, Text, Text, Text>{
+    private Text keyText = new Text();
+    private Text valueText = new Text();
+
+    public void map(Object key, Text value, Context context) throws IOException, InterruptedException {
+      StringTokenizer itr = new StringTokenizer(value.toString(), "\n\t");
+
+      // Read each line
+      while (itr.hasMoreTokens()) {
+        String typeStr = itr.nextToken();
+        String valueStr = new String("");
+        if (itr.hasMoreTokens()) {
+          valueStr = itr.nextToken();
+        }
+
+        // Output the frequent items
+        if (typeStr.indexOf('m') != -1) {
+          keyText.set("key");
+          valueText.set("F|" + valueStr);
+          context.write(keyText, valueText);
+        }
+
+        // Generate the rules based on frequent pairs and output the pairs
+        else if (typeStr.indexOf('a') != -1) {
+          String item1 = valueStr.substring(1, valueStr.indexOf('+'));
+          String item2 = valueStr.substring(valueStr.indexOf('+') + 1, valueStr.indexOf(':'));
+          keyText.set("key");
+          valueText.set("R|" + item1 + ">" + item2);
+          context.write(keyText, valueText);
+          valueText.set("R|" + item2 + ">" + item1);
+          context.write(keyText, valueText);
+          valueText.set("P|" + valueStr);
+          context.write(keyText, valueText);
+        }
+
+        // enerate the rules based on frequent triples and output the triples
+        else {
+          int separateIdx1 = valueStr.indexOf('+');
+          int separateIdx2 = valueStr.indexOf('+', separateIdx1 + 1);
+          String item1 = valueStr.substring(1, separateIdx1);
+          String item2 = valueStr.substring(separateIdx1 + 1, separateIdx2);
+          String item3 = valueStr.substring(separateIdx2 + 1, valueStr.indexOf(':'));
+          keyText.set("key");
+          valueText.set("R|" + item1 + "+" + item2 + ">" + item3);
+          context.write(keyText, valueText);
+          valueText.set("R|" + item3 + ">" + item1 + "+" + item2);
+          context.write(keyText, valueText);
+          valueText.set("R|" + item1 + "+" + item3 + ">" + item2);
+          context.write(keyText, valueText);
+          valueText.set("R|" + item2 + ">" + item1 + "+" + item3);
+          context.write(keyText, valueText);
+          valueText.set("R|" + item2 + "+" + item3 + ">" + item1);
+          context.write(keyText, valueText);
+          valueText.set("R|" + item1 + ">" + item2 + "+" + item3);
+          context.write(keyText, valueText);
+          valueText.set("T|" + valueStr);
+          context.write(keyText, valueText);
+        }
+      }
+    }
+  }
+
+  /* Reducer for association rule generation */
+  /* Input: "key" R|<rule> */
+  /*        "key" F|<(freq item:count)> */
+  /*        "key" P|<(freq pair:count)> */
+  /*        "key" T|<(freq triple:count)> */
+  /* Output: <rule> <list of (freq item:count)>|<list of (freq pair:count)>|<list of (freq triple:count)> */
+  public static class GenerateRuleReducer extends Reducer<Text, Text, Text, Text> {
+    private Text keyText = new Text();
+    private Text valueText = new Text();
+
+    public void reduce(Text key, Iterable<Text> values, Context context) throws IOException, InterruptedException {
+      String[] rules = new String[MAX_RULE_COUNT];
+      int ruleCount = 0;
+      String freqItemList = new String("");
+      String freqPairList = new String("");
+      String freqTripleList = new String("");
+      boolean freqItemFirst = true;
+      boolean freqPairFirst = true;
+      boolean freqTripleFirst = true;
+
+      for (Text val : values) {
+        String valueType = val.toString().substring(0, 1);
+        String valueStr = val.toString().substring(2);
+
+        // Store all the baskets
+        if (valueType.indexOf('R') != -1) {
+          rules[ruleCount] = valueStr;
+          ruleCount++;
+        }
+
+        // Concatenate all the frequent items
+        else if (valueType.indexOf('F') != -1) {
+          if (!freqItemFirst) {
+            freqItemList += ",";
+          }
+          freqItemList += valueStr;
+          freqItemFirst = false;
+        }
+
+        // Concatenate all the frequent pairs
+        else if (valueType.indexOf('P') != -1) {
+          if (!freqPairFirst) {
+            freqPairList += ",";
+          }
+          freqPairList += valueStr;
+          freqPairFirst = false;
+        }
+
+        // Concatenate all the frequent triples
+        else {
+          if (!freqTripleFirst) {
+            freqTripleList += ",";
+          }
+          freqTripleList += valueStr;
+          freqTripleFirst = false;
+        }
+      }
+
+      // Output every key-valie pairs
+      for (int i = 0; i < ruleCount; i++) {
+        keyText.set(rules[i]);
+        valueText.set(freqItemList + "|" + freqPairList + "|" + freqTripleList);
+        context.write(keyText, valueText);
+      }
+    }
+  }
+
   public static void main(String[] args) throws Exception {
     Configuration conf = new Configuration();
     String[] otherArgs = new GenericOptionsParser(conf, args).getRemainingArgs();
@@ -600,7 +738,6 @@ public class FrequentItemsets {
     Job job1 = new Job(conf, "PCY pass 1");
     job1.setJarByClass(FrequentItemsets.class);
     job1.setMapperClass(PCYPass1Mapper.class);
-    // job1.setCombinerClass(PCYPass1Reducer.class);
     job1.setReducerClass(PCYPass1Reducer.class);
     job1.setOutputKeyClass(Text.class);
     job1.setOutputValueClass(Text.class);
@@ -649,15 +786,28 @@ public class FrequentItemsets {
     */
 
     // PCY algorithm pass 3: Count the triples that hash to frequent buckets
+    /*
     Job job5 = new Job(conf, "PCY pass 3");
     job5.setJarByClass(FrequentItemsets.class);
     job5.setMapperClass(PCYPass3Mapper.class);
-    //job5.setNumReduceTasks(0);
     job5.setReducerClass(PCYPass3Reducer.class);
     job5.setOutputKeyClass(Text.class);
     job5.setOutputValueClass(Text.class);
     FileInputFormat.addInputPath(job5, new Path(otherArgs[1] + "_4"));
     FileOutputFormat.setOutputPath(job5, new Path(otherArgs[1] + "_5"));
     job5.waitForCompletion(true);
+    */
+
+    // Generate association rules based on the frequent itemsets
+    Job job6 = new Job(conf, "Generate rule");
+    job6.setJarByClass(FrequentItemsets.class);
+    job6.setMapperClass(GenerateRuleMapper.class);
+    //job6.setNumReduceTasks(0);
+    job6.setReducerClass(GenerateRuleReducer.class);
+    job6.setOutputKeyClass(Text.class);
+    job6.setOutputValueClass(Text.class);
+    FileInputFormat.addInputPath(job6, new Path(otherArgs[1] + "_5"));
+    FileOutputFormat.setOutputPath(job6, new Path(otherArgs[1] + "_6"));
+    job6.waitForCompletion(true);
   }
 }
