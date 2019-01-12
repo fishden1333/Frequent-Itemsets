@@ -328,6 +328,117 @@ public class FrequentItemsets {
     }
   }
 
+  /* Mapper for preparing for the pass 3 of PCY algorithm */
+  /* Input: "Basket" <basket items> */
+  /*        "Freq item" <(freq item:count)> */
+  /*        "Freq pair" <(freq pair:count)> */
+  /*        "Hash" <hash value> */
+  /* Output: "key" B|<basket items> */
+  /*         "key" F|<(freq item:count)> */
+  /*         "key" P|<(freq pair:count)> */
+  /*         "key" H|<hash value> */
+  public static class PreparePass3Mapper extends Mapper<Object, Text, Text, Text>{
+    private Text keyText = new Text();
+    private Text valueText = new Text();
+
+    public void map(Object key, Text value, Context context) throws IOException, InterruptedException {
+      StringTokenizer itr = new StringTokenizer(value.toString(), "\n\t");
+
+      // Read each line
+      while (itr.hasMoreTokens()) {
+        String typeStr = itr.nextToken();
+        String valueStr = new String("");
+        if (itr.hasMoreTokens()) {
+          valueStr = itr.nextToken();
+        }
+
+        // Output the key-value pair
+        if (typeStr.indexOf('B') != -1 || typeStr.indexOf('H') != -1) {
+          keyText.set("key");
+          valueText.set(typeStr.substring(0, 1) + "|" + valueStr);
+          context.write(keyText, valueText);
+        }
+        else if (typeStr.indexOf('F') != -1) {
+          keyText.set("key");
+          if (typeStr.indexOf('p') != -1) {
+            valueText.set("P|" + valueStr);
+          }
+          else {
+            valueText.set("F|" + valueStr);
+          }
+          context.write(keyText, valueText);
+        }
+      }
+    }
+  }
+
+  /* Reducer for preparing for the pass 3 of PCY algorithm */
+  /* Input: "key" B|<basket items> */
+  /*        "key" F|<(freq item:count)> */
+  /*        "key" P|<(freq pair:count)> */
+  /*        "key" H|<hash value> */
+  /* Output: <basket items> <list of (freq item:count)>|<list of (freq pair:count)>|<list of hash values> */
+  public static class PreparePass3Reducer extends Reducer<Text, Text, Text, Text> {
+    private Text keyText = new Text();
+    private Text valueText = new Text();
+
+    public void reduce(Text key, Iterable<Text> values, Context context) throws IOException, InterruptedException {
+      String[] baskets = new String[BASKET_COUNT];
+      int b = 0;
+      String freqItemList = new String("");
+      String freqPairList = new String("");
+      String hashList = new String("");
+      boolean freqItemFirst = true;
+      boolean freqPairFirst = true;
+      boolean hashFirst = true;
+
+      for (Text val : values) {
+        String valueType = val.toString().substring(0, 1);
+        String valueStr = val.toString().substring(2);
+
+        // Store all the baskets
+        if (valueType.indexOf('B') != -1) {
+          baskets[b] = valueStr;
+          b++;
+        }
+
+        // Concatenate all the frequent items
+        else if (valueType.indexOf('F') != -1) {
+          if (!freqItemFirst) {
+            freqItemList += ",";
+          }
+          freqItemList += valueStr;
+          freqItemFirst = false;
+        }
+
+        // Concatenate all the frequent pairs
+        else if (valueType.indexOf('P') != -1) {
+          if (!freqPairFirst) {
+            freqPairList += ",";
+          }
+          freqPairList += valueStr;
+          freqPairFirst = false;
+        }
+
+        // Concatenate all the hash values
+        else {
+          if (!hashFirst) {
+            hashList += ",";
+          }
+          hashList += valueStr;
+          hashFirst = false;
+        }
+      }
+
+      // Output every key-valie pairs
+      for (int i = 0; i < BASKET_COUNT; i++) {
+        keyText.set(baskets[i]);
+        valueText.set(freqItemList + "|" + freqPairList + "|" + hashList);
+        context.write(keyText, valueText);
+      }
+    }
+  }
+
   public static void main(String[] args) throws Exception {
     Configuration conf = new Configuration();
     String[] otherArgs = new GenericOptionsParser(conf, args).getRemainingArgs();
@@ -337,6 +448,7 @@ public class FrequentItemsets {
     }
 
     // PCY algorithm pass 1: Count the items, and hash each pair
+    /*
     Job job1 = new Job(conf, "PCY pass 1");
     job1.setJarByClass(FrequentItemsets.class);
     job1.setMapperClass(PCYPass1Mapper.class);
@@ -347,8 +459,10 @@ public class FrequentItemsets {
     FileInputFormat.addInputPath(job1, new Path(otherArgs[0]));
     FileOutputFormat.setOutputPath(job1, new Path(otherArgs[1] + "_1"));
     job1.waitForCompletion(true);
+    */
 
     // Prepare for PCY algorithm pass 2
+    /*
     Job job2 = new Job(conf, "Prepare pass 2");
     job2.setJarByClass(FrequentItemsets.class);
     job2.setMapperClass(PreparePass2Mapper.class);
@@ -358,17 +472,31 @@ public class FrequentItemsets {
     FileInputFormat.addInputPath(job2, new Path(otherArgs[1] + "_1"));
     FileOutputFormat.setOutputPath(job2, new Path(otherArgs[1] + "_2"));
     job2.waitForCompletion(true);
+    */
 
     // PCY algorithm pass 2: Count the pairs that hash to frequent buckets
+    /*
     Job job3 = new Job(conf, "PCY pass 2");
     job3.setJarByClass(FrequentItemsets.class);
     job3.setMapperClass(PCYPass2Mapper.class);
-    // job3.setNumReduceTasks(0);
     job3.setReducerClass(PCYPass2Reducer.class);
     job3.setOutputKeyClass(Text.class);
     job3.setOutputValueClass(Text.class);
     FileInputFormat.addInputPath(job3, new Path(otherArgs[1] + "_2"));
     FileOutputFormat.setOutputPath(job3, new Path(otherArgs[1] + "_3"));
     job3.waitForCompletion(true);
+    */
+
+    // Prepare for PCY algorithm pass 3
+    Job job4 = new Job(conf, "Prepare pass 3");
+    job4.setJarByClass(FrequentItemsets.class);
+    job4.setMapperClass(PreparePass3Mapper.class);
+    // job4.setNumReduceTasks(0);
+    job4.setReducerClass(PreparePass3Reducer.class);
+    job4.setOutputKeyClass(Text.class);
+    job4.setOutputValueClass(Text.class);
+    FileInputFormat.addInputPath(job4, new Path(otherArgs[1] + "_3"));
+    FileOutputFormat.setOutputPath(job4, new Path(otherArgs[1] + "_4"));
+    job4.waitForCompletion(true);
   }
 }
