@@ -237,25 +237,33 @@ public class FrequentItemsets {
         String[] items = basketStr.split(",");
         for (int i = 0; i < items.length; i++) {
           for (int j = i + 1; j < items.length; j++) {
-
-            // Read each pair, and add 1 for each candidate pair's count
             String item1 = items[i];
             String item2 = items[j];
+            int i1 = ((item1.hashCode() % HASH_LEN) + HASH_LEN) % HASH_LEN;
+            int i2 = ((item2.hashCode() % HASH_LEN) + HASH_LEN) % HASH_LEN;
+            int hashPair = (((i1 + i2) % HASH_LEN) + HASH_LEN) % HASH_LEN;
             int freqCount = 0;
+            boolean inFreqBucket = false;
+
+            // Read each pair, and add 1 for each candidate pair's count
             for (int f = 0; f < freqItemList.length; f++) {
               if (freqItemList[f].equals(item1) || freqItemList[f].equals(item2)) {
                 freqCount++;
               }
             }
-            if (freqCount == 2) {
+            for (int h = 0; h < hashList.length; h++) {
+              int hashListNum = Integer.parseInt(hashList[h]);
+              if (hashListNum == hashPair) {
+                inFreqBucket = true;
+              }
+            }
+            if (freqCount == 2 && inFreqBucket == true) {
               keyText.set(item1 + "+" + item2);
               valueText.set("1");
               context.write(keyText, valueText);
             }
 
             // Hash each triple of items
-            int i1 = ((item1.hashCode() % HASH_LEN) + HASH_LEN) % HASH_LEN;
-            int i2 = ((item2.hashCode() % HASH_LEN) + HASH_LEN) % HASH_LEN;
             for (int k = j + 1; k < items.length; k++) {
               int i3 = ((items[k].hashCode() % HASH_LEN) + HASH_LEN) % HASH_LEN;
               int hashValue = (((i1 + i2 + i3) % HASH_LEN) + HASH_LEN) % HASH_LEN;
@@ -439,6 +447,146 @@ public class FrequentItemsets {
     }
   }
 
+  /* Mapper for the pass 3 of PCY algorithm, to find the frequent triples */
+  /* Input: <basket items> <list of (freq item:count)>|<list of (freq pair:count)>|<list of hash values> */
+  /* Output: "Freq item" <list of (freq item:count)> */
+  /*         "Freq pair" <list of (freq pair:count)> */
+  /*         <triple> "1" */
+  public static class PCYPass3Mapper extends Mapper<Object, Text, Text, Text>{
+    private Text keyText = new Text();
+    private Text valueText = new Text();
+
+    public void map(Object key, Text value, Context context) throws IOException, InterruptedException {
+      StringTokenizer itr = new StringTokenizer(value.toString(), "\n\t");
+
+      // Read each line
+      while (itr.hasMoreTokens()) {
+        String basketStr = itr.nextToken();
+        String valueStr = new String("");
+        if (itr.hasMoreTokens()) {
+          valueStr = itr.nextToken();
+        }
+        int separateIdx1 = valueStr.indexOf('|');
+        int separateIdx2 = valueStr.indexOf('|', separateIdx1 + 1);
+        String freqItemStr = valueStr.substring(0, separateIdx1);
+        String freqPairStr = valueStr.substring(separateIdx1 + 1, separateIdx2);
+        String hashStr = valueStr.substring(separateIdx2 + 1);
+        String[] freqItemList = freqItemStr.split(",");
+        String[] freqPairList = freqPairStr.split(",");
+        String[] hashList = hashStr.split(",");
+
+        // Preprocess the frequent items and the frequent pairs lists
+        for (int i = 0; i < freqItemList.length; i++) {
+          freqItemList[i] = freqItemList[i].substring(1, freqItemList[i].indexOf(':'));
+        }
+        for (int i = 0; i < freqPairList.length; i++) {
+          freqPairList[i] = freqPairList[i].substring(1, freqPairList[i].indexOf(':'));
+        }
+
+        // Output the list of frequent items and the list of frequent pairs
+        keyText.set("Freq item");
+        valueText.set(freqItemStr);
+        context.write(keyText, valueText);
+        keyText.set("Freq pair");
+        valueText.set(freqPairStr);
+        context.write(keyText, valueText);
+
+        String[] items = basketStr.split(",");
+        for (int i = 0; i < items.length; i++) {
+          for (int j = i + 1; j < items.length; j++) {
+            for (int k = j + 1; k < items.length; k++) {
+              String item1 = items[i];
+              String item2 = items[j];
+              String item3 = items[k];
+              int i1 = ((item1.hashCode() % HASH_LEN) + HASH_LEN) % HASH_LEN;
+              int i2 = ((item2.hashCode() % HASH_LEN) + HASH_LEN) % HASH_LEN;
+              int i3 = ((item3.hashCode() % HASH_LEN) + HASH_LEN) % HASH_LEN;
+              int hashTriple = (((i1 + i2 + i3) % HASH_LEN) + HASH_LEN) % HASH_LEN;
+              int freqItemCount = 0;
+              int freqPairCount = 0;
+              boolean inFreqBucket = false;
+
+              // Read each pair, and add 1 for each candidate pair's count
+              for (int f = 0; f < freqItemList.length; f++) {
+                if (freqItemList[f].equals(item1) || freqItemList[f].equals(item2) || freqItemList[f].equals(item3)) {
+                  freqItemCount++;
+                }
+              }
+              for (int p = 0; p < freqPairList.length; p++) {
+                String pairItem1 = freqPairList[p].substring(0, freqPairList[p].indexOf('+'));
+                String pairItem2 = freqPairList[p].substring(freqPairList[p].indexOf('+') + 1);
+                if ((pairItem1.equals(item1) || pairItem1.equals(item2)) && (pairItem2.equals(item1) || pairItem2.equals(item2))) {
+                  freqPairCount++;
+                }
+                else if ((pairItem1.equals(item1) || pairItem1.equals(item3)) && (pairItem2.equals(item1) || pairItem2.equals(item3))) {
+                  freqPairCount++;
+                }
+                else if ((pairItem1.equals(item2) || pairItem1.equals(item3)) && (pairItem2.equals(item2) || pairItem2.equals(item3))) {
+                  freqPairCount++;
+                }
+              }
+              for (int h = 0; h < hashList.length; h++) {
+                int hashListNum = Integer.parseInt(hashList[h]);
+                if (hashListNum == hashTriple) {
+                  inFreqBucket = true;
+                }
+              }
+              if (freqItemCount == 3 && freqPairCount == 3 && inFreqBucket == true) {
+                keyText.set(item1 + "+" + item2 + "+" + item3);
+                valueText.set("1");
+                context.write(keyText, valueText);
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+
+  /* Reducer for the pass 3 of PCY algorithm, to find the frequent triples */
+  /* Input: "Freq item" <list of (freq item:count)> */
+  /*        "Freq pair" <list of (freq pair:count)> */
+  /*        <triple> "1" */
+  /* Output: "Freq item" <(freq item:count)> */
+  /*         "Freq pair" <(freq pair:count)> */
+  /*         "Freq triple" <(freq triple:count)> */
+  public static class PCYPass3Reducer extends Reducer<Text, Text, Text, Text> {
+    private Text keyText = new Text();
+    private Text valueText = new Text();
+
+    public void reduce(Text key, Iterable<Text> values, Context context) throws IOException, InterruptedException {
+      String keyStr = key.toString();
+
+      // Output the frequent items and the frequent pairs
+      if (keyStr.indexOf('F') != -1) {
+        for (Text val : values) {
+          String[] freqList = val.toString().split(",");
+          for (int i = 0; i < freqList.length; i++) {
+            valueText.set(freqList[i]);
+            context.write(key, valueText);
+          }
+          break;
+        }
+      }
+      
+      else {
+
+        // Count each triple
+        int sum = 0;
+        for (Text val : values) {
+          sum += 1;
+        }
+
+        // Only output the triples that pass the support
+        if (sum >= SUPPORT) {
+          keyText.set("Freq triple");
+          valueText.set("(" + keyStr + ":" + String.valueOf(sum) + ")");
+          context.write(keyText, valueText);
+        }
+      }
+    }
+  }
+
   public static void main(String[] args) throws Exception {
     Configuration conf = new Configuration();
     String[] otherArgs = new GenericOptionsParser(conf, args).getRemainingArgs();
@@ -488,15 +636,28 @@ public class FrequentItemsets {
     */
 
     // Prepare for PCY algorithm pass 3
+    /*
     Job job4 = new Job(conf, "Prepare pass 3");
     job4.setJarByClass(FrequentItemsets.class);
     job4.setMapperClass(PreparePass3Mapper.class);
-    // job4.setNumReduceTasks(0);
     job4.setReducerClass(PreparePass3Reducer.class);
     job4.setOutputKeyClass(Text.class);
     job4.setOutputValueClass(Text.class);
     FileInputFormat.addInputPath(job4, new Path(otherArgs[1] + "_3"));
     FileOutputFormat.setOutputPath(job4, new Path(otherArgs[1] + "_4"));
     job4.waitForCompletion(true);
+    */
+
+    // PCY algorithm pass 3: Count the triples that hash to frequent buckets
+    Job job5 = new Job(conf, "PCY pass 3");
+    job5.setJarByClass(FrequentItemsets.class);
+    job5.setMapperClass(PCYPass3Mapper.class);
+    //job5.setNumReduceTasks(0);
+    job5.setReducerClass(PCYPass3Reducer.class);
+    job5.setOutputKeyClass(Text.class);
+    job5.setOutputValueClass(Text.class);
+    FileInputFormat.addInputPath(job5, new Path(otherArgs[1] + "_4"));
+    FileOutputFormat.setOutputPath(job5, new Path(otherArgs[1] + "_5"));
+    job5.waitForCompletion(true);
   }
 }
