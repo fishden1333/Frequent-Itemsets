@@ -16,8 +16,8 @@ import org.apache.hadoop.util.GenericOptionsParser;
 public class FrequentItemsets {
 
   public static int BASKET_COUNT = 9835;  // The total number of baskets
-  public static int SUPPORT = 150;  // The support for frequent itemsets
-  public static double CONFIDENCE = 0.2;  // The confidence for association rules
+  public static int SUPPORT = 200;  // The support for frequent itemsets
+  public static double CONFIDENCE = 0.3;  // The confidence for association rules
   public static int HASH_LEN = 100000;  // The length of the hash table
   public static int MAX_RULE_COUNT = 10000;  // The maximum number of rules
 
